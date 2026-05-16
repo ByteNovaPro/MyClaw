@@ -445,6 +445,13 @@ def build_app(client: Any, access_token: str) -> Any:
     app.state.sessions = {}
     app.state.lock = threading.Lock()
 
+    @app.middleware("http")
+    async def no_store_assets(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if request.url.path in {"/", "/index.html", "/chat.html", "/app.js", "/styles.css"}:
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/health")
     def health() -> Dict[str, str]:
         return {"ok": "true"}

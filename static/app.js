@@ -121,13 +121,53 @@ async function readJson(response) {
 async function parseResponse(response) {
   const data = await readJson(response);
   if (response.status === 401) {
-    goToAuth();
-    return null;
+    throw new Error(data.reply || "访问口令错误");
   }
   if (!response.ok) {
     throw new Error(data.reply || "请求失败");
   }
   return data;
+}
+
+async function refreshConversation() {
+  if (!accessToken) {
+    return false;
+  }
+  try {
+    const response = await fetch("/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: accessToken }),
+    });
+    const data = await readJson(response);
+    if (!response.ok || !data.ok || !data.conversationId) {
+      return false;
+    }
+    saveSession(accessToken, data.sessionId || serverSessionId, data.conversationId);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function fetchWithSession(path, options) {
+  const response = await fetch(path, options);
+  if (response.status !== 401) {
+    return response;
+  }
+
+  const data = await readJson(response);
+  if (!String(data.reply || "").includes("会话已失效")) {
+    goToAuth();
+    return null;
+  }
+
+  const refreshed = await refreshConversation();
+  if (!refreshed) {
+    goToAuth();
+    return null;
+  }
+  return fetch(path, { ...options, headers: authHeaders() });
 }
 
 function scrollChat() {
@@ -287,11 +327,14 @@ async function submitCommandDecision(path, commandId, node) {
   });
 
   try {
-    const response = await fetch(path, {
+    const response = await fetchWithSession(path, {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ commandId }),
     });
+    if (!response) {
+      return;
+    }
     const data = await parseResponse(response);
     if (!data) {
       return;
@@ -324,11 +367,14 @@ function bindChatPage() {
     send.textContent = "发送中...";
 
     try {
-      const response = await fetch("/chat", {
+      const response = await fetchWithSession("/chat", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({ message }),
       });
+      if (!response) {
+        return;
+      }
       const data = await parseResponse(response);
       if (!data) {
         return;
@@ -353,11 +399,14 @@ function bindChatPage() {
     send.disabled = true;
 
     try {
-      const response = await fetch("/reset", {
+      const response = await fetchWithSession("/reset", {
         method: "POST",
         headers: authHeaders(),
         body: "{}",
       });
+      if (!response) {
+        return;
+      }
       const data = await parseResponse(response);
       if (!data) {
         return;
@@ -418,6 +467,7 @@ async function verifyToken(token) {
     });
     const data = await readJson(response);
     if (!response.ok || !data.ok || !data.conversationId) {
+      clearSession();
       showAuth(data.reply || "访问口令错误");
       return;
     }
