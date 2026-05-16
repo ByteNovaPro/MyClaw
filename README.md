@@ -29,9 +29,20 @@ DASHSCOPE_API_KEY=你的百炼 API Key
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 MODEL=qwen-plus
 ACCESS_TOKEN=1234
+COMMAND_TIMEOUT_SECONDS=120
+MAX_COMMAND_OUTPUT_CHARS=20000
+SESSION_TTL_SECONDS=21600
+MAX_SESSIONS=50
 ```
 
 `ACCESS_TOKEN` 是 4 位数字局域网访问口令。服务具备执行电脑命令的能力，未配置或不是 4 位数字时会拒绝启动。
+
+可选配置：
+
+- `COMMAND_TIMEOUT_SECONDS`：单条命令最长运行时间，默认 `120` 秒。
+- `MAX_COMMAND_OUTPUT_CHARS`：stdout/stderr 单项最大返回字符数，默认 `20000`。
+- `SESSION_TTL_SECONDS`：浏览器会话在服务端保留时间，默认 `21600` 秒。
+- `MAX_SESSIONS`：服务端最多保留的浏览器会话数，默认 `50`。
 
 ## 运行
 
@@ -111,25 +122,32 @@ http://8.148.231.238:8080
 ## 行为
 
 - 首次访问：页面要求输入 `ACCESS_TOKEN`。口令只保存在当前浏览器会话中；服务重启后需要重新输入。
+- 浏览器会话：认证成功后服务会创建独立 `conversationId`。不同浏览器或设备的对话记忆和待确认命令相互隔离。
 - 普通对话：页面直接显示模型回复。
-- 命令需求：页面先显示执行影响说明、具体命令、确认按钮和取消按钮。点击确认后才会执行，执行后显示：
+- 命令需求：页面先显示执行影响说明、风险等级、具体命令、确认按钮和取消按钮。高风险命令需要额外勾选确认后才能执行。
 - 清空上下文：点击页面右上角 `清空上下文`，会清空页面对话记录、模型对话记忆和待确认命令。
+- 命令结果：确认执行后页面会显示命令、执行目录、退出码、是否超时、stdout、stderr 和 Agent 后续判断。
 
 ```text
-调用命令：<具体命令>
-完成
-```
-
-或：
-
-```text
-调用命令：<具体命令>
-请继续输入需求
+命令执行结果
+命令：<具体命令>
+退出码：0
+stdout：...
+stderr：...
+Agent：完成 / 请继续输入需求
 ```
 
 ## 注意
 
-命令会在服务所在电脑的当前目录执行。请只在可信局域网中启动服务。
+命令会在项目目录中执行。请只在可信局域网中启动服务。风险提示只能帮助识别常见高危命令，不能替代人工确认。
+
+## API 概览
+
+- `POST /auth`：提交 4 位口令，成功返回 `sessionId` 和 `conversationId`。
+- `POST /chat`：请求头需要 `X-Access-Token` 和 `X-Conversation-Id`。
+- `POST /confirm`、`POST /cancel`、`POST /reset`：同样需要两个请求头。
+- `/chat` 返回命令确认时包含 `riskLevel` 和 `riskNote`。
+- `/confirm` 返回结构化命令结果，前端负责渲染 stdout/stderr/退出码。
 
 ## 局域网和手机热点访问
 

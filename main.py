@@ -1,14 +1,17 @@
 import argparse
+import hmac
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import threading
+import time
 import uuid
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from network_access import print_lan_access_info
 
@@ -44,19 +47,18 @@ except ImportError:  # pragma: no cover - keeps startup message clear before ins
 
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DEFAULT_MODEL = "qwen-plus"
-COMMAND_TIMEOUT_SECONDS = 120
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
+DEFAULT_MAX_COMMAND_OUTPUT_CHARS = 20000
+DEFAULT_SESSION_TTL_SECONDS = 21600
+DEFAULT_MAX_SESSIONS = 50
 EXIT_WORDS = {"exit", "quit", "退出"}
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
 PROJECT_DIR = Path(__file__).resolve().parent
 STATIC_DIR = PROJECT_DIR / "static"
-STATIC_FILES = {
-    "/": "index.html",
-    "/index.html": "index.html",
-    "/styles.css": "styles.css",
-    "/app.js": "app.js",
-}
 TOKEN_HEADER = "X-Access-Token"
+CONVERSATION_HEADER = "X-Conversation-Id"
+COMMAND_WORKDIR = PROJECT_DIR
 
 SYSTEM_PROMPT = """
 你是一个命令行对话智能体。你必须根据用户输入判断是否需要执行 shell 命令。
@@ -78,7 +80,7 @@ def load_environment() -> None:
 
 
 def ensure_dependencies() -> None:
-    if OpenAI is None:
+    if OpenAI is None and "openai" not in MISSING_DEPENDENCIES:
         MISSING_DEPENDENCIES.append("openai")
     if MISSING_DEPENDENCIES:
         packages = " ".join(sorted(set(MISSING_DEPENDENCIES)))
@@ -121,6 +123,33 @@ def build_access_token() -> str:
     return access_token
 
 
+def get_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return max(minimum, min(value, maximum))
+
+
+def command_timeout_seconds() -> int:
+    return get_int_env("COMMAND_TIMEOUT_SECONDS", DEFAULT_COMMAND_TIMEOUT_SECONDS, 5, 900)
+
+
+def max_command_output_chars() -> int:
+    return get_int_env("MAX_COMMAND_OUTPUT_CHARS", DEFAULT_MAX_COMMAND_OUTPUT_CHARS, 1000, 100000)
+
+
+def session_ttl_seconds() -> int:
+    return get_int_env("SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS, 300, 86400)
+
+
+def max_sessions() -> int:
+    return get_int_env("MAX_SESSIONS", DEFAULT_MAX_SESSIONS, 1, 500)
+
+
 def chat(client: OpenAI, messages: List[Dict[str, str]]) -> str:
     model = os.getenv("MODEL", DEFAULT_MODEL)
     response = client.chat.completions.create(
@@ -130,6 +159,14 @@ def chat(client: OpenAI, messages: List[Dict[str, str]]) -> str:
     )
     content = response.choices[0].message.content
     return content.strip() if content else ""
+
+
+def truncate_output(value: str, max_chars: int) -> Tuple[str, bool]:
+    if len(value) <= max_chars:
+        return value, False
+    omitted = len(value) - max_chars
+    suffix = f"\n\n[输出已截断，省略 {omitted} 个字符]"
+    return value[:max_chars] + suffix, True
 
 
 def parse_decision(content: str) -> Dict[str, str]:
@@ -155,42 +192,115 @@ def parse_decision(content: str) -> Dict[str, str]:
     return {"action": "reply", "content": "请继续输入需求"}
 
 
-def run_command(command: str) -> Dict[str, Optional[str]]:
+def analyze_command_risk(command: str) -> Dict[str, str]:
+    normalized = re.sub(r"\s+", " ", command.strip().lower())
+    high_patterns = [
+        r"\brm\s+(-[^\s]*[rf][^\s]*|-[^\s]*[fr][^\s]*)\b",
+        r"\bsudo\b",
+        r"\bchmod\s+(-r\s+)?777\b",
+        r"\bchown\s+(-r\s+)?",
+        r"\bdd\s+.*\bof=",
+        r"\bmkfs\b",
+        r"\bdiskutil\b",
+        r"\bshutdown\b|\breboot\b|\bhalt\b",
+        r"\bcurl\b.*\|\s*(sh|bash)\b",
+        r"\bwget\b.*\|\s*(sh|bash)\b",
+        r":\(\)\s*\{\s*:\|:",
+    ]
+    medium_patterns = [
+        r"\bkill(all)?\b|\bpkill\b",
+        r"\bdocker\s+compose\s+down\b",
+        r"\bdocker\s+rm\b|\bdocker\s+rmi\b",
+        r"\bgit\s+push\b|\bgit\s+reset\b|\bgit\s+clean\b",
+        r"\bmv\b|\bcp\b",
+        r">\s*\S+|>>\s*\S+",
+    ]
+
+    if any(re.search(pattern, normalized) for pattern in high_patterns):
+        return {
+            "riskLevel": "high",
+            "riskNote": "该命令可能修改系统、删除文件或执行高权限操作，请确认你完全信任它。",
+        }
+    if any(re.search(pattern, normalized) for pattern in medium_patterns):
+        return {
+            "riskLevel": "medium",
+            "riskNote": "该命令可能修改文件、容器、Git 状态或运行中的进程，请确认影响范围。",
+        }
+    return {
+        "riskLevel": "low",
+        "riskNote": "该命令看起来风险较低，但仍会在服务所在环境中执行。",
+    }
+
+
+def run_command(command: str) -> Dict[str, Any]:
+    timeout_seconds = command_timeout_seconds()
+    output_limit = max_command_output_chars()
+    process: Optional[subprocess.Popen[str]] = None
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             shell=True,
-            cwd=os.getcwd(),
-            capture_output=True,
+            cwd=str(COMMAND_WORKDIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=COMMAND_TIMEOUT_SECONDS,
+            start_new_session=True,
         )
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        stdout, stdout_truncated = truncate_output(stdout.strip(), output_limit)
+        stderr, stderr_truncated = truncate_output(stderr.strip(), output_limit)
         return {
             "command": command,
-            "returncode": str(completed.returncode),
-            "stdout": completed.stdout.strip(),
-            "stderr": completed.stderr.strip(),
-            "timeout": None,
+            "cwd": str(COMMAND_WORKDIR),
+            "returncode": process.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "timeout": False,
+            "timeoutSeconds": timeout_seconds,
+            "truncated": stdout_truncated or stderr_truncated,
         }
     except subprocess.TimeoutExpired as exc:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except OSError:
+                process.kill()
+            try:
+                stdout_after_kill, stderr_after_kill = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout_after_kill, stderr_after_kill = process.communicate()
+        else:
+            stdout_after_kill = ""
+            stderr_after_kill = ""
+        stdout_value = exc.stdout if isinstance(exc.stdout, str) else stdout_after_kill
+        stderr_value = exc.stderr if isinstance(exc.stderr, str) else stderr_after_kill
+        stdout, stdout_truncated = truncate_output((stdout_value or "").strip(), output_limit)
+        stderr, stderr_truncated = truncate_output((stderr_value or "").strip(), output_limit)
         return {
             "command": command,
+            "cwd": str(COMMAND_WORKDIR),
             "returncode": None,
-            "stdout": (exc.stdout or "").strip() if isinstance(exc.stdout, str) else "",
-            "stderr": (exc.stderr or "").strip() if isinstance(exc.stderr, str) else "",
-            "timeout": str(COMMAND_TIMEOUT_SECONDS),
+            "stdout": stdout,
+            "stderr": stderr,
+            "timeout": True,
+            "timeoutSeconds": timeout_seconds,
+            "truncated": stdout_truncated or stderr_truncated,
         }
 
 
-def command_result_message(result: Dict[str, Optional[str]]) -> str:
+def command_result_message(result: Dict[str, Any]) -> str:
     return json.dumps(
         {
             "type": "command_result",
             "command": result["command"],
+            "cwd": result["cwd"],
             "returncode": result["returncode"],
             "stdout": result["stdout"],
             "stderr": result["stderr"],
             "timeout": result["timeout"],
+            "timeoutSeconds": result["timeoutSeconds"],
+            "truncated": result["truncated"],
         },
         ensure_ascii=False,
     )
@@ -209,14 +319,17 @@ def prepare_user_input(client: OpenAI, messages: List[Dict[str, str]], user_inpu
         return {"type": "reply", "reply": decision["content"]}
 
     messages.append({"role": "assistant", "content": json.dumps(decision, ensure_ascii=False)})
+    risk = analyze_command_risk(decision["command"])
     return {
         "type": "command_confirmation",
         "command": decision["command"],
         "description": decision["description"],
+        "riskLevel": risk["riskLevel"],
+        "riskNote": risk["riskNote"],
     }
 
 
-def execute_command_decision(client: OpenAI, messages: List[Dict[str, str]], command: str) -> str:
+def execute_command_decision(client: OpenAI, messages: List[Dict[str, str]], command: str) -> Dict[str, Any]:
     result = run_command(command)
     messages.append({"role": "user", "content": command_result_message(result)})
 
@@ -232,7 +345,11 @@ def execute_command_decision(client: OpenAI, messages: List[Dict[str, str]], com
             "content": json.dumps({"action": "reply", "content": final_content}, ensure_ascii=False),
         }
     )
-    return f"调用命令：{command}\n{final_content}"
+    return {
+        "type": "command_result",
+        "reply": final_content,
+        "commandResult": result,
+    }
 
 
 def cancel_command_decision(messages: List[Dict[str, str]], command: str) -> str:
@@ -265,8 +382,59 @@ def token_error() -> Any:
     return JSONResponse(status_code=401, content={"type": "error", "reply": "访问口令错误"})
 
 
+def conversation_error() -> Any:
+    return JSONResponse(status_code=401, content={"type": "error", "reply": "会话已失效，请重新输入口令"})
+
+
 def valid_token(expected_token: str, provided_token: str) -> bool:
-    return provided_token == expected_token
+    return hmac.compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8"))
+
+
+def build_conversation() -> Dict[str, Any]:
+    now = time.time()
+    return {
+        "messages": build_messages(),
+        "pending_commands": {},
+        "lock": threading.Lock(),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def cleanup_sessions_locked(sessions: Dict[str, Dict[str, Any]]) -> None:
+    now = time.time()
+    ttl = session_ttl_seconds()
+    expired = [
+        conversation_id
+        for conversation_id, conversation in sessions.items()
+        if now - float(conversation.get("updated_at", 0)) > ttl
+    ]
+    for conversation_id in expired:
+        sessions.pop(conversation_id, None)
+
+    limit = max_sessions()
+    if len(sessions) <= limit:
+        return
+    ordered = sorted(sessions.items(), key=lambda item: float(item[1].get("updated_at", 0)))
+    for conversation_id, _conversation in ordered[: len(sessions) - limit]:
+        sessions.pop(conversation_id, None)
+
+
+def create_conversation(app: Any) -> str:
+    with app.state.lock:
+        cleanup_sessions_locked(app.state.sessions)
+        conversation_id = uuid.uuid4().hex
+        app.state.sessions[conversation_id] = build_conversation()
+        return conversation_id
+
+
+def get_conversation(app: Any, conversation_id: str) -> Optional[Dict[str, Any]]:
+    cleanup_sessions_locked(app.state.sessions)
+    conversation = app.state.sessions.get(conversation_id)
+    if conversation is None:
+        return None
+    conversation["updated_at"] = time.time()
+    return conversation
 
 
 def build_app(client: Any, access_token: str) -> Any:
@@ -274,8 +442,7 @@ def build_app(client: Any, access_token: str) -> Any:
     app.state.client = client
     app.state.access_token = access_token
     app.state.session_id = uuid.uuid4().hex
-    app.state.messages = build_messages()
-    app.state.pending_commands = {}
+    app.state.sessions = {}
     app.state.lock = threading.Lock()
 
     @app.get("/health")
@@ -299,12 +466,14 @@ def build_app(client: Any, access_token: str) -> Any:
                 status_code=401,
                 content={"ok": False, "reply": "访问口令错误"},
             )
-        return {"ok": True, "sessionId": app.state.session_id}
+        conversation_id = create_conversation(app)
+        return {"ok": True, "sessionId": app.state.session_id, "conversationId": conversation_id}
 
     @app.post("/chat")
     def chat_endpoint(
         payload: Dict[str, Any] = Body(default_factory=dict),
         x_access_token: str = Header(default="", alias=TOKEN_HEADER),
+        x_conversation_id: str = Header(default="", alias=CONVERSATION_HEADER),
     ) -> Any:
         if not valid_token(app.state.access_token, x_access_token):
             return token_error()
@@ -321,10 +490,14 @@ def build_app(client: Any, access_token: str) -> Any:
 
         try:
             with app.state.lock:
-                response = prepare_user_input(app.state.client, app.state.messages, user_input)
+                conversation = get_conversation(app, x_conversation_id.strip())
+                if conversation is None:
+                    return conversation_error()
+            with conversation["lock"]:
+                response = prepare_user_input(app.state.client, conversation["messages"], user_input)
                 if response["type"] == "command_confirmation":
                     command_id = uuid.uuid4().hex
-                    app.state.pending_commands[command_id] = response["command"]
+                    conversation["pending_commands"][command_id] = response
                     response["commandId"] = command_id
         except OpenAIError:
             response = {"type": "reply", "reply": "请继续输入需求"}
@@ -335,6 +508,7 @@ def build_app(client: Any, access_token: str) -> Any:
     def confirm_endpoint(
         payload: Dict[str, Any] = Body(default_factory=dict),
         x_access_token: str = Header(default="", alias=TOKEN_HEADER),
+        x_conversation_id: str = Header(default="", alias=CONVERSATION_HEADER),
     ) -> Any:
         if not valid_token(app.state.access_token, x_access_token):
             return token_error()
@@ -342,45 +516,61 @@ def build_app(client: Any, access_token: str) -> Any:
         command_id = str(payload.get("commandId", "")).strip()
         try:
             with app.state.lock:
-                command = app.state.pending_commands.pop(command_id, "")
-                if not command:
+                conversation = get_conversation(app, x_conversation_id.strip())
+                if conversation is None:
+                    return conversation_error()
+            with conversation["lock"]:
+                command_decision = conversation["pending_commands"].pop(command_id, None)
+                if not command_decision:
                     return JSONResponse(
                         status_code=404,
                         content={"type": "reply", "reply": "请继续输入需求"},
                     )
-                reply = execute_command_decision(app.state.client, app.state.messages, command)
+                reply = execute_command_decision(app.state.client, conversation["messages"], command_decision["command"])
         except OpenAIError:
-            reply = "请继续输入需求"
+            reply = {"type": "reply", "reply": "请继续输入需求"}
 
-        return {"type": "reply", "reply": reply}
+        return reply
 
     @app.post("/cancel")
     def cancel_endpoint(
         payload: Dict[str, Any] = Body(default_factory=dict),
         x_access_token: str = Header(default="", alias=TOKEN_HEADER),
+        x_conversation_id: str = Header(default="", alias=CONVERSATION_HEADER),
     ) -> Any:
         if not valid_token(app.state.access_token, x_access_token):
             return token_error()
 
         command_id = str(payload.get("commandId", "")).strip()
         with app.state.lock:
-            command = app.state.pending_commands.pop(command_id, "")
-            if not command:
+            conversation = get_conversation(app, x_conversation_id.strip())
+            if conversation is None:
+                return conversation_error()
+        with conversation["lock"]:
+            command_decision = conversation["pending_commands"].pop(command_id, None)
+            if not command_decision:
                 return JSONResponse(
                     status_code=404,
                     content={"type": "reply", "reply": "请继续输入需求"},
                 )
-            reply = cancel_command_decision(app.state.messages, command)
+            reply = cancel_command_decision(conversation["messages"], command_decision["command"])
 
         return {"type": "reply", "reply": reply}
 
     @app.post("/reset")
-    def reset_endpoint(x_access_token: str = Header(default="", alias=TOKEN_HEADER)) -> Any:
+    def reset_endpoint(
+        x_access_token: str = Header(default="", alias=TOKEN_HEADER),
+        x_conversation_id: str = Header(default="", alias=CONVERSATION_HEADER),
+    ) -> Any:
         if not valid_token(app.state.access_token, x_access_token):
             return token_error()
 
         with app.state.lock:
-            reset_context(app.state.messages, app.state.pending_commands)
+            conversation = get_conversation(app, x_conversation_id.strip())
+            if conversation is None:
+                return conversation_error()
+        with conversation["lock"]:
+            reset_context(conversation["messages"], conversation["pending_commands"])
         return {"type": "reply", "reply": "上下文已清空"}
 
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
@@ -393,7 +583,7 @@ def ensure_port_available(host: str, port: int) -> None:
         try:
             sock.bind((host, port))
         except OSError as exc:
-            if exc.errno == 48:
+            if exc.errno in {48, 98}:
                 raise RuntimeError(f"端口 {port} 已被占用，服务启动失败") from exc
             raise
 
@@ -434,7 +624,15 @@ def run_cli(client: Any) -> int:
             print(f"命令：{response['command']}")
             confirm = input("确认执行？输入 y 确认，其他任意输入取消：").strip().lower()
             if confirm == "y":
-                print(execute_command_decision(client, messages, response["command"]))
+                result = execute_command_decision(client, messages, response["command"])
+                command_result = result.get("commandResult", {})
+                print(f"调用命令：{command_result.get('command', response['command'])}")
+                print(f"退出码：{command_result.get('returncode')}")
+                if command_result.get("stdout"):
+                    print(command_result["stdout"])
+                if command_result.get("stderr"):
+                    print(command_result["stderr"])
+                print(result.get("reply", "请继续输入需求"))
             else:
                 print(cancel_command_decision(messages, response["command"]))
         except OpenAIError:

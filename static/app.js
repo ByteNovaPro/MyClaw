@@ -1,19 +1,10 @@
 const accessTokenKey = "myclaw_access_token";
 const sessionIdKey = "myclaw_session_id";
+const conversationIdKey = "myclaw_conversation_id";
+
 let accessToken = "";
 let serverSessionId = "";
-
-function saveAccessToken(token) {
-  accessToken = token;
-  sessionStorage.setItem(accessTokenKey, token);
-  sessionStorage.setItem(sessionIdKey, serverSessionId);
-}
-
-function clearAccessToken() {
-  accessToken = "";
-  sessionStorage.removeItem(accessTokenKey);
-  sessionStorage.removeItem(sessionIdKey);
-}
+let conversationId = "";
 
 const auth = document.querySelector("#auth");
 const authForm = document.querySelector("#auth-form");
@@ -25,17 +16,45 @@ const input = document.querySelector("#message");
 const send = document.querySelector("#send");
 const reset = document.querySelector("#reset");
 
-function showApp() {
+function saveSession(token, sessionId, nextConversationId) {
+  accessToken = token;
+  serverSessionId = sessionId;
+  conversationId = nextConversationId;
+  sessionStorage.setItem(accessTokenKey, token);
+  sessionStorage.setItem(sessionIdKey, sessionId);
+  sessionStorage.setItem(conversationIdKey, nextConversationId);
+}
+
+function loadSession() {
+  accessToken = sessionStorage.getItem(accessTokenKey) || "";
+  serverSessionId = sessionStorage.getItem(sessionIdKey) || "";
+  conversationId = sessionStorage.getItem(conversationIdKey) || "";
+}
+
+function clearSession() {
+  accessToken = "";
+  serverSessionId = "";
+  conversationId = "";
+  sessionStorage.removeItem(accessTokenKey);
+  sessionStorage.removeItem(sessionIdKey);
+  sessionStorage.removeItem(conversationIdKey);
+}
+
+function goToChat() {
   window.location.replace("/chat.html");
 }
 
+function goToAuth() {
+  clearSession();
+  window.location.replace("/");
+}
+
 function showAuth(message) {
-  if (!auth) {
-    window.location.replace("/");
+  if (!authForm) {
+    goToAuth();
     return;
   }
-  auth.classList.remove("is-hidden");
-  window.scrollTo(0, 0);
+
   clearTokenInputs();
   tokenInputs[0].focus();
   const existing = authForm.querySelector(".auth-error");
@@ -45,16 +64,14 @@ function showAuth(message) {
     }
     return;
   }
-  if (message) {
-    if (existing) {
-      existing.textContent = message;
-      return;
-    }
-    const error = document.createElement("p");
-    error.className = "auth-error";
-    error.textContent = message;
-    authForm.appendChild(error);
+  if (existing) {
+    existing.textContent = message;
+    return;
   }
+  const error = document.createElement("p");
+  error.className = "auth-error";
+  error.textContent = message;
+  authForm.appendChild(error);
 }
 
 function setAuthLoading(isLoading) {
@@ -89,21 +106,32 @@ function authHeaders() {
   return {
     "Content-Type": "application/json",
     "X-Access-Token": accessToken,
+    "X-Conversation-Id": conversationId,
   };
 }
 
-function redirectToAuth() {
-  clearAccessToken();
-  window.location.replace("/");
+async function readJson(response) {
+  try {
+    return await response.json();
+  } catch (error) {
+    return {};
+  }
 }
 
 async function parseResponse(response) {
-  const data = await response.json();
+  const data = await readJson(response);
   if (response.status === 401) {
-    redirectToAuth();
+    goToAuth();
     return null;
   }
+  if (!response.ok) {
+    throw new Error(data.reply || "请求失败");
+  }
   return data;
+}
+
+function scrollChat() {
+  chat.scrollTop = chat.scrollHeight;
 }
 
 function addMessage(text, className) {
@@ -111,16 +139,103 @@ function addMessage(text, className) {
   node.className = `msg ${className}`;
   node.textContent = text;
   chat.appendChild(node);
-  chat.scrollTop = chat.scrollHeight;
+  scrollChat();
+}
+
+function addNotice(text) {
+  addMessage(text, "assistant notice");
+}
+
+function createMetaItem(label, value) {
+  const item = document.createElement("span");
+  item.className = "result-meta-item";
+  item.textContent = `${label}: ${value}`;
+  return item;
+}
+
+function addOutputBlock(parent, title, value, className) {
+  if (!value) {
+    return;
+  }
+  const label = document.createElement("div");
+  label.className = "result-label";
+  label.textContent = title;
+
+  const output = document.createElement("pre");
+  output.className = `command-output ${className}`;
+  output.textContent = value;
+
+  parent.append(label, output);
+}
+
+function addCommandResult(data) {
+  const result = data.commandResult || {};
+  const node = document.createElement("div");
+  node.className = "msg assistant command-result";
+
+  const title = document.createElement("div");
+  title.className = "result-title";
+  title.textContent = "命令执行结果";
+
+  const command = document.createElement("pre");
+  command.className = "command-preview";
+  command.textContent = result.command || "";
+
+  const meta = document.createElement("div");
+  meta.className = "result-meta";
+  meta.append(
+    createMetaItem("退出码", result.returncode === null || result.returncode === undefined ? "无" : result.returncode),
+    createMetaItem("超时", result.timeout ? `${result.timeoutSeconds} 秒` : "否"),
+    createMetaItem("目录", result.cwd || "")
+  );
+  if (result.truncated) {
+    meta.append(createMetaItem("输出", "已截断"));
+  }
+
+  node.append(title, command, meta);
+  addOutputBlock(node, "stdout", result.stdout || "", "stdout");
+  addOutputBlock(node, "stderr", result.stderr || "", "stderr");
+
+  const reply = document.createElement("p");
+  reply.className = "result-reply";
+  reply.textContent = data.reply || "请继续输入需求";
+  node.appendChild(reply);
+
+  chat.appendChild(node);
+  scrollChat();
+}
+
+function riskLabel(level) {
+  if (level === "high") {
+    return "高风险";
+  }
+  if (level === "medium") {
+    return "中风险";
+  }
+  return "低风险";
 }
 
 function addCommandConfirmation(data) {
   const node = document.createElement("div");
-  node.className = "msg assistant confirmation";
+  const riskLevel = data.riskLevel || "low";
+  node.className = `msg assistant confirmation risk-${riskLevel}`;
+
+  const header = document.createElement("div");
+  header.className = "confirmation-header";
+
+  const badge = document.createElement("span");
+  badge.className = `risk-badge risk-${riskLevel}`;
+  badge.textContent = riskLabel(riskLevel);
 
   const description = document.createElement("p");
   description.className = "confirmation-text";
   description.textContent = data.description || "执行该命令后会在服务所在电脑上完成相应终端操作。";
+
+  header.append(badge, description);
+
+  const riskNote = document.createElement("p");
+  riskNote.className = "risk-note";
+  riskNote.textContent = data.riskNote || "请确认该命令符合你的预期。";
 
   const command = document.createElement("pre");
   command.className = "command-preview";
@@ -134,15 +249,32 @@ function addCommandConfirmation(data) {
   confirm.className = "confirm-button";
   confirm.textContent = "确认执行";
 
+  if (riskLevel === "high") {
+    const guard = document.createElement("label");
+    guard.className = "risk-check";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    const text = document.createElement("span");
+    text.textContent = "我已确认高风险命令的影响";
+    guard.append(checkbox, text);
+    confirm.disabled = true;
+    checkbox.addEventListener("change", () => {
+      confirm.disabled = !checkbox.checked;
+    });
+    node.append(header, riskNote, command, guard);
+  } else {
+    node.append(header, riskNote, command);
+  }
+
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "cancel-button";
   cancel.textContent = "取消";
 
-  actions.append(confirm, cancel);
-  node.append(description, command, actions);
+  actions.append(cancel, confirm);
+  node.appendChild(actions);
   chat.appendChild(node);
-  chat.scrollTop = chat.scrollHeight;
+  scrollChat();
 
   confirm.addEventListener("click", () => submitCommandDecision("/confirm", data.commandId, node));
   cancel.addEventListener("click", () => submitCommandDecision("/cancel", data.commandId, node));
@@ -161,18 +293,23 @@ async function submitCommandDecision(path, commandId, node) {
       body: JSON.stringify({ commandId }),
     });
     const data = await parseResponse(response);
-    if (data) {
+    if (!data) {
+      return;
+    }
+    if (data.type === "command_result") {
+      addCommandResult(data);
+    } else {
       addMessage(data.reply || "请继续输入需求", "assistant");
     }
   } catch (error) {
-    addMessage("请继续输入需求", "assistant");
+    addNotice(error.message || "请继续输入需求");
   } finally {
     node.remove();
     input.focus();
   }
 }
 
-if (form) {
+function bindChatPage() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = input.value.trim();
@@ -182,7 +319,9 @@ if (form) {
 
     addMessage(message, "user");
     input.value = "";
+    input.disabled = true;
     send.disabled = true;
+    send.textContent = "发送中...";
 
     try {
       const response = await fetch("/chat", {
@@ -200,15 +339,15 @@ if (form) {
         addMessage(data.reply || "请继续输入需求", "assistant");
       }
     } catch (error) {
-      addMessage("请继续输入需求", "assistant");
+      addNotice(error.message || "请继续输入需求");
     } finally {
       send.disabled = false;
+      input.disabled = false;
+      send.textContent = "发送";
       input.focus();
     }
   });
-}
 
-if (reset) {
   reset.addEventListener("click", async () => {
     reset.disabled = true;
     send.disabled = true;
@@ -226,7 +365,7 @@ if (reset) {
       chat.replaceChildren();
       addMessage(data.reply || "上下文已清空", "assistant");
     } catch (error) {
-      addMessage("请继续输入需求", "assistant");
+      addNotice(error.message || "请继续输入需求");
     } finally {
       reset.disabled = false;
       send.disabled = false;
@@ -235,7 +374,7 @@ if (reset) {
   });
 }
 
-if (authForm) {
+function bindAuthPage() {
   authForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const token = getTokenFromInputs();
@@ -245,29 +384,29 @@ if (authForm) {
     }
     verifyToken(token);
   });
+
+  tokenInputs.forEach((item, index) => {
+    item.addEventListener("input", () => {
+      const digits = item.value.replace(/\D/g, "");
+      item.value = digits.slice(-1);
+      if (item.value && index < tokenInputs.length - 1) {
+        tokenInputs[index + 1].focus();
+      }
+    });
+
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Backspace" && !item.value && index > 0) {
+        tokenInputs[index - 1].focus();
+      }
+    });
+
+    item.addEventListener("paste", (event) => {
+      event.preventDefault();
+      const text = event.clipboardData.getData("text");
+      fillTokenInputs(text);
+    });
+  });
 }
-
-tokenInputs.forEach((item, index) => {
-  item.addEventListener("input", () => {
-    const digits = item.value.replace(/\D/g, "");
-    item.value = digits.slice(-1);
-    if (item.value && index < tokenInputs.length - 1) {
-      tokenInputs[index + 1].focus();
-    }
-  });
-
-  item.addEventListener("keydown", (event) => {
-    if (event.key === "Backspace" && !item.value && index > 0) {
-      tokenInputs[index - 1].focus();
-    }
-  });
-
-  item.addEventListener("paste", (event) => {
-    event.preventDefault();
-    const text = event.clipboardData.getData("text");
-    fillTokenInputs(text);
-  });
-});
 
 async function verifyToken(token) {
   setAuthLoading(true);
@@ -277,14 +416,13 @@ async function verifyToken(token) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     });
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
+    const data = await readJson(response);
+    if (!response.ok || !data.ok || !data.conversationId) {
       showAuth(data.reply || "访问口令错误");
       return;
     }
-    serverSessionId = data.sessionId || serverSessionId;
-    saveAccessToken(token);
-    showApp();
+    saveSession(token, data.sessionId || serverSessionId, data.conversationId);
+    goToChat();
   } catch (error) {
     showAuth("验证失败，请稍后重试");
   } finally {
@@ -292,43 +430,42 @@ async function verifyToken(token) {
   }
 }
 
+async function fetchSessionId() {
+  const response = await fetch("/session");
+  const data = await readJson(response);
+  return data.sessionId || "";
+}
+
 async function initializeAuth() {
+  bindAuthPage();
   try {
-    const response = await fetch("/session");
-    const data = await response.json();
-    serverSessionId = data.sessionId || "";
+    serverSessionId = await fetchSessionId();
   } catch (error) {
     serverSessionId = "";
   }
 
-  const storedSessionId = sessionStorage.getItem(sessionIdKey) || "";
-  const storedToken = sessionStorage.getItem(accessTokenKey) || "";
-  if (serverSessionId && storedSessionId === serverSessionId && storedToken) {
-    verifyToken(storedToken);
+  loadSession();
+  if (serverSessionId && serverSessionId === sessionStorage.getItem(sessionIdKey) && accessToken) {
+    verifyToken(accessToken);
   } else {
-    clearAccessToken();
+    clearSession();
     showAuth();
   }
 }
 
 async function initializeChat() {
+  bindChatPage();
+  loadSession();
   try {
-    const response = await fetch("/session");
-    const data = await response.json();
-    serverSessionId = data.sessionId || "";
+    const currentSessionId = await fetchSessionId();
+    if (!currentSessionId || currentSessionId !== serverSessionId || !accessToken || !conversationId) {
+      goToAuth();
+      return;
+    }
   } catch (error) {
-    redirectToAuth();
+    goToAuth();
     return;
   }
-
-  const storedSessionId = sessionStorage.getItem(sessionIdKey) || "";
-  const storedToken = sessionStorage.getItem(accessTokenKey) || "";
-  if (!serverSessionId || storedSessionId !== serverSessionId || !storedToken) {
-    redirectToAuth();
-    return;
-  }
-
-  accessToken = storedToken;
   input.focus();
 }
 

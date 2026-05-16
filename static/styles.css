@@ -169,12 +169,89 @@ h1 {
   margin-right: 12%;
 }
 
+.notice {
+  color: #6941c6;
+  background: #f4efff;
+}
+
 .confirmation {
   border: 1px solid #d3dbe6;
 }
 
+.confirmation-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .confirmation-text {
+  flex: 1;
+  margin: 0;
+}
+
+.risk-badge {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.risk-low {
+  border-color: #c7ddcf;
+}
+
+.risk-medium {
+  border-color: #f6c86f;
+}
+
+.risk-high {
+  border-color: #f5a3a3;
+}
+
+.risk-badge.risk-low {
+  color: #216e3a;
+  background: #e8f5ec;
+}
+
+.risk-badge.risk-medium {
+  color: #83540a;
+  background: #fff4d6;
+}
+
+.risk-badge.risk-high {
+  color: #a61b1b;
+  background: #fee4e2;
+}
+
+.risk-note {
   margin: 0 0 10px;
+  color: #475467;
+}
+
+.risk-high .risk-note {
+  color: #a61b1b;
+}
+
+.risk-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: #344054;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.risk-check input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
 }
 
 .command-preview {
@@ -187,6 +264,62 @@ h1 {
   background: #fff;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
+}
+
+.command-result {
+  border: 1px solid #cdd8e7;
+}
+
+.result-title {
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.result-meta-item {
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: #344054;
+  background: #e9eef5;
+  font-size: 12px;
+}
+
+.result-label {
+  margin: 10px 0 6px;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.command-output {
+  max-height: 260px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #ccd5e1;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  background: #fff;
+}
+
+.command-output.stderr {
+  border-color: #f2b8b5;
+  background: #fff7f6;
+}
+
+.result-reply {
+  margin: 12px 0 0;
 }
 
 .confirmation-actions {
@@ -277,5 +410,33 @@ button:disabled {
     flex-basis: 52px;
     width: 52px;
     height: 60px;
+  }
+
+  #chat {
+    height: min(62vh, 560px);
+    padding: 12px;
+  }
+
+  .msg {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  #form {
+    flex-direction: column;
+  }
+
+  #form button {
+    width: 100%;
+  }
+
+  .confirmation-header,
+  .confirmation-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .confirmation-actions button {
+    width: 100%;
   }
 }
