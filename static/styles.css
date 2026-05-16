@@ -1,0 +1,281 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17202a;
+  background: #f5f7fa;
+}
+
+main {
+  width: min(920px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 28px 0;
+}
+
+.is-hidden {
+  display: none;
+}
+
+.auth-panel {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(23, 105, 224, 0.12), rgba(31, 137, 99, 0.1)),
+    #f4f7fb;
+}
+
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(520px, calc(100vw - 48px));
+  min-width: 320px;
+  padding: 34px;
+  border: 1px solid rgba(151, 163, 184, 0.36);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 22px 60px rgba(16, 24, 40, 0.16);
+}
+
+.auth-heading {
+  margin-bottom: 22px;
+  text-align: left;
+}
+
+.auth-heading h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.auth-heading p {
+  margin: 0;
+  color: #5b6675;
+  line-height: 1.5;
+  max-width: 360px;
+}
+
+.auth-box label {
+  display: block;
+  margin-bottom: 8px;
+  color: #344054;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-control {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.auth-box button {
+  width: 100%;
+}
+
+.token-box {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.token-item {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 66px;
+  padding: 0;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 26px;
+  border: 2px solid #c5ceda;
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+}
+
+.token-item:focus {
+  border-color: #1769e0;
+  box-shadow: 0 0 0 3px rgba(23, 105, 224, 0.16);
+}
+
+.token-item:disabled {
+  color: #98a2b3;
+  background: #f2f4f7;
+}
+
+.auth-box button {
+  margin-top: 16px;
+  height: 46px;
+  font-weight: 600;
+}
+
+.auth-error {
+  margin-top: 12px;
+  color: #b42318;
+  font-size: 14px;
+}
+
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.hint {
+  margin: 0 0 18px;
+  color: #5b6675;
+  line-height: 1.5;
+}
+
+#chat {
+  height: min(64vh, 640px);
+  overflow: auto;
+  border: 1px solid #d9e0ea;
+  background: #fff;
+  padding: 16px;
+}
+
+.msg {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.user {
+  background: #e8f1ff;
+  margin-left: 12%;
+}
+
+.assistant {
+  background: #f0f2f5;
+  margin-right: 12%;
+}
+
+.confirmation {
+  border: 1px solid #d3dbe6;
+}
+
+.confirmation-text {
+  margin: 0 0 10px;
+}
+
+.command-preview {
+  margin: 0 0 12px;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid #ccd5e1;
+  border-radius: 6px;
+  color: #101828;
+  background: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+form {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #c8d1dc;
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+button {
+  height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  background: #1769e0;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: #8daee4;
+  cursor: wait;
+}
+
+.cancel-button {
+  color: #17202a;
+  background: #e3e8ef;
+}
+
+.cancel-button:disabled {
+  color: #5b6675;
+  background: #edf1f5;
+}
+
+.reset-button {
+  flex: 0 0 auto;
+  color: #17202a;
+  background: #e3e8ef;
+}
+
+.reset-button:disabled {
+  color: #5b6675;
+  background: #edf1f5;
+}
+
+@media (max-width: 640px) {
+  .auth-box {
+    width: min(100%, 420px);
+    min-width: 0;
+    padding: 26px;
+  }
+
+  .auth-heading h1 {
+    font-size: 26px;
+  }
+
+  header {
+    display: block;
+  }
+
+  .reset-button {
+    width: 100%;
+    margin-top: 12px;
+  }
+
+  .token-box {
+    gap: 8px;
+    justify-content: space-between;
+  }
+
+  .token-item {
+    flex-basis: 52px;
+    width: 52px;
+    height: 60px;
+  }
+}

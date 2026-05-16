@@ -1,0 +1,11 @@
+services:
+  myclaw:
+    build: .
+    container_name: myclaw-agent
+    env_file:
+      - .env
+    environment:
+      PUBLIC_PORT: "8080"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

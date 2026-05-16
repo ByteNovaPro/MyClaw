@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyClaw智能体</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <section id="auth" class="auth-panel">
+    <form id="auth-form" class="auth-box">
+      <div class="auth-heading">
+        <h1>访问口令</h1>
+        <p>同一 Wi-Fi 或手机热点下的设备需要验证后才能使用。</p>
+      </div>
+      <div class="auth-control">
+        <label>4 位数字口令</label>
+        <div class="token-box" aria-label="4 位数字口令">
+          <input class="token-item" type="text" inputmode="numeric" maxlength="1" autocomplete="one-time-code" aria-label="第 1 位">
+          <input class="token-item" type="text" inputmode="numeric" maxlength="1" aria-label="第 2 位">
+          <input class="token-item" type="text" inputmode="numeric" maxlength="1" aria-label="第 3 位">
+          <input class="token-item" type="text" inputmode="numeric" maxlength="1" aria-label="第 4 位">
+        </div>
+      </div>
+      <button type="submit">进入智能体</button>
+    </form>
+  </section>
+
+  <main id="app" class="is-hidden">
+    <header>
+      <div>
+        <h1>MyClaw智能体</h1>
+        <p class="hint">输入问题或描述需要在终端完成的任务。需要执行命令时，会先显示影响说明并等待你确认。</p>
+      </div>
+      <button id="reset" type="button" class="reset-button">清空上下文</button>
+    </header>
+    <section id="chat" aria-live="polite"></section>
+    <form id="form">
+      <input id="message" autocomplete="off" placeholder="例如：列出当前目录文件" autofocus>
+      <button id="send" type="submit">发送</button>
+    </form>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
