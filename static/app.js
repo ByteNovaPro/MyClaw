@@ -28,12 +28,14 @@ const reset = document.querySelector("#reset");
 function showApp() {
   auth.classList.add("is-hidden");
   app.classList.remove("is-hidden");
+  window.scrollTo(0, 0);
   input.focus();
 }
 
 function showAuth(message) {
   app.classList.add("is-hidden");
   auth.classList.remove("is-hidden");
+  window.scrollTo(0, 0);
   clearTokenInputs();
   tokenInputs[0].focus();
   const existing = authForm.querySelector(".auth-error");
