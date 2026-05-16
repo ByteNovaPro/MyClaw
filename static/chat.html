@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MyClaw智能体</title>
+  <link rel="stylesheet" href="/styles.css?v=3">
+</head>
+<body>
+  <main id="app">
+    <header>
+      <div>
+        <h1>MyClaw智能体</h1>
+        <p class="hint">输入问题或描述需要在终端完成的任务。需要执行命令时，会先显示影响说明并等待你确认。</p>
+      </div>
+      <button id="reset" type="button" class="reset-button">清空上下文</button>
+    </header>
+    <section id="chat" aria-live="polite"></section>
+    <form id="form">
+      <input id="message" autocomplete="off" placeholder="例如：列出当前目录文件" autofocus>
+      <button id="send" type="submit">发送</button>
+    </form>
+  </main>
+  <script src="/app.js?v=3"></script>
+</body>
+</html>

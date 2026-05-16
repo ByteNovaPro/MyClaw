@@ -26,14 +26,14 @@ const send = document.querySelector("#send");
 const reset = document.querySelector("#reset");
 
 function showApp() {
-  auth.classList.add("is-hidden");
-  app.classList.remove("is-hidden");
-  window.scrollTo(0, 0);
-  input.focus();
+  window.location.replace("/chat.html");
 }
 
 function showAuth(message) {
-  app.classList.add("is-hidden");
+  if (!auth) {
+    window.location.replace("/");
+    return;
+  }
   auth.classList.remove("is-hidden");
   window.scrollTo(0, 0);
   clearTokenInputs();
@@ -92,11 +92,15 @@ function authHeaders() {
   };
 }
 
+function redirectToAuth() {
+  clearAccessToken();
+  window.location.replace("/");
+}
+
 async function parseResponse(response) {
   const data = await response.json();
   if (response.status === 401) {
-    clearAccessToken();
-    showAuth(data.reply || "访问口令错误");
+    redirectToAuth();
     return null;
   }
   return data;
@@ -168,74 +172,80 @@ async function submitCommandDecision(path, commandId, node) {
   }
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const message = input.value.trim();
-  if (!message) {
-    return;
-  }
-
-  addMessage(message, "user");
-  input.value = "";
-  send.disabled = true;
-
-  try {
-    const response = await fetch("/chat", {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ message }),
-    });
-    const data = await parseResponse(response);
-    if (!data) {
+if (form) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message) {
       return;
     }
-    if (data.type === "command_confirmation") {
-      addCommandConfirmation(data);
-    } else {
-      addMessage(data.reply || "请继续输入需求", "assistant");
+
+    addMessage(message, "user");
+    input.value = "";
+    send.disabled = true;
+
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ message }),
+      });
+      const data = await parseResponse(response);
+      if (!data) {
+        return;
+      }
+      if (data.type === "command_confirmation") {
+        addCommandConfirmation(data);
+      } else {
+        addMessage(data.reply || "请继续输入需求", "assistant");
+      }
+    } catch (error) {
+      addMessage("请继续输入需求", "assistant");
+    } finally {
+      send.disabled = false;
+      input.focus();
     }
-  } catch (error) {
-    addMessage("请继续输入需求", "assistant");
-  } finally {
-    send.disabled = false;
-    input.focus();
-  }
-});
+  });
+}
 
-reset.addEventListener("click", async () => {
-  reset.disabled = true;
-  send.disabled = true;
+if (reset) {
+  reset.addEventListener("click", async () => {
+    reset.disabled = true;
+    send.disabled = true;
 
-  try {
-    const response = await fetch("/reset", {
-      method: "POST",
-      headers: authHeaders(),
-      body: "{}",
-    });
-    const data = await parseResponse(response);
-    if (!data) {
+    try {
+      const response = await fetch("/reset", {
+        method: "POST",
+        headers: authHeaders(),
+        body: "{}",
+      });
+      const data = await parseResponse(response);
+      if (!data) {
+        return;
+      }
+      chat.replaceChildren();
+      addMessage(data.reply || "上下文已清空", "assistant");
+    } catch (error) {
+      addMessage("请继续输入需求", "assistant");
+    } finally {
+      reset.disabled = false;
+      send.disabled = false;
+      input.focus();
+    }
+  });
+}
+
+if (authForm) {
+  authForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const token = getTokenFromInputs();
+    if (!/^\d{4}$/.test(token)) {
+      showAuth("请输入 4 位数字口令");
       return;
     }
-    chat.replaceChildren();
-    addMessage(data.reply || "上下文已清空", "assistant");
-  } catch (error) {
-    addMessage("请继续输入需求", "assistant");
-  } finally {
-    reset.disabled = false;
-    send.disabled = false;
-    input.focus();
-  }
-});
-
-authForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const token = getTokenFromInputs();
-  if (!/^\d{4}$/.test(token)) {
-    showAuth("请输入 4 位数字口令");
-    return;
-  }
-  verifyToken(token);
-});
+    verifyToken(token);
+  });
+}
 
 tokenInputs.forEach((item, index) => {
   item.addEventListener("input", () => {
@@ -301,4 +311,29 @@ async function initializeAuth() {
   }
 }
 
-initializeAuth();
+async function initializeChat() {
+  try {
+    const response = await fetch("/session");
+    const data = await response.json();
+    serverSessionId = data.sessionId || "";
+  } catch (error) {
+    redirectToAuth();
+    return;
+  }
+
+  const storedSessionId = sessionStorage.getItem(sessionIdKey) || "";
+  const storedToken = sessionStorage.getItem(accessTokenKey) || "";
+  if (!serverSessionId || storedSessionId !== serverSessionId || !storedToken) {
+    redirectToAuth();
+    return;
+  }
+
+  accessToken = storedToken;
+  input.focus();
+}
+
+if (authForm) {
+  initializeAuth();
+} else if (app) {
+  initializeChat();
+}

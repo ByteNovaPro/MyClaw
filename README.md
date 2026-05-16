@@ -153,6 +153,7 @@ Dockerfile
 docker-compose.yml
 static/
   index.html
+  chat.html
   styles.css
   app.js
 ```
